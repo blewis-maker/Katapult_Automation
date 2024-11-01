@@ -86,7 +86,7 @@ def extractPoles(job_data, job_name, job_id):
     if isinstance(job_data, tuple):
         job_data = job_data[1]  # Unpack if job_data is a tuple
     # Get Job_Status from job data
-    job_status = job_data.get('metadata', {}).get('Job_Status', "Unknown")
+    job_status = job_data.get('metadata', {}).get('job_status', "")
     nodes = job_data.get("nodes", {})
 
     if not nodes:
