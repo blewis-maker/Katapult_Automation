@@ -102,7 +102,8 @@ def extractPoles(job_data, job_name, job_id):
         if node_data.get('attributes', {}).get('node_type', {}).get('button_added') == 'pole':
             latitude = node_data.get('latitude')
             longitude = node_data.get('longitude')
-            int_note = node_data.get('attributes', {}).get('internal_note', {}).get('button_added')
+            mr_note_data = node_data.get('attributes', {}).get('mr_note', {})
+            mr_note = next(iter(mr_note_data.values()), "")  # Default to "Unknown" if not found
             scid = node_data.get('attributes', {}).get('scid', {}).get('auto_button')
             pole_tag = None
             pole_tag_data = node_data.get('attributes', {}).get('pole_tag', {})
@@ -122,7 +123,7 @@ def extractPoles(job_data, job_name, job_id):
             pole_points.append({
                 "Longitude": longitude,
                 "Latitude": latitude,
-                "MRNote": int_note,
+                "MRNote": mr_note,
                 "PoleTag": pole_tag,
                 "SCID": scid,
                 "Job_Status": job_status,
@@ -174,6 +175,8 @@ def savePointsToShapefile(points, filename, job_dict):
         job_id = point.get("job_id")  # Retrieve job_id from point data
         point["Job_Name"] = job_dict.get(job_id, "Unknown")  # Set Job_Name or default to "Unknown"
         point["Job_Status"] = point.get("job_status", "Unknown")  # Include Job_Status for each point
+        point["MR_Status"] = point.get("mr_status", "Unknown")  # Include Job_Status for each point
+        point["Company"] = point.get("company", "Unknown")  # Include Job_Status for each point
 
         if isinstance(point.get("PoleTag"), dict) and "tagtext" in point["PoleTag"]:
             point["PoleTag"] = point["PoleTag"]["tagtext"]
@@ -197,12 +200,10 @@ def saveMasterShapefile(all_points, filename):
     workspace_path = r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace"
     file_path = os.path.join(workspace_path, filename)
 
-    # Remove the job_id field from each point
-    for point in all_points:
-        point.pop("job_id", None)  # Remove 'job_id' if it exists
 
     # Define the expected columns with default values if missing
     for point in all_points:
+        point.pop("job_id", None)
         point.setdefault("Job_Name", "Unknown")
         point.setdefault("Job_Status", "Unknown")
         point.setdefault("MR_Status", "Unknown")
