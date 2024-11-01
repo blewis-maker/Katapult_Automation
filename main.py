@@ -213,12 +213,7 @@ def saveMasterShapefile(all_points, filename):
     geometries = [Point(point["Longitude"], point["Latitude"]) for point in all_points]
 
     # Create GeoDataFrame with specific columns, ensuring MR_Status and Company are included
-    gdf = gpd.GeoDataFrame(
-        all_points,
-        geometry=geometries,
-        crs="EPSG:4326",
-        columns=["Longitude", "Latitude", "MRNote", "PoleTag", "SCID", "Job_Status", "Job_Name", "MR_Status", "Company"]
-    )
+    gdf = gpd.GeoDataFrame(all_points, geometry=geometries, crs="EPSG:4326")
 
     try:
         gdf.to_file(file_path, driver="ESRI Shapefile")
