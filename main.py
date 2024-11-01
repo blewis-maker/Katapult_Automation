@@ -21,6 +21,9 @@ def getJobList():
             conn.request("GET", f"{URL_PATH}?api_key={API_KEY}", headers=headers)
             res = conn.getresponse()
             data = res.read().decode("utf-8")
+
+            #print("Raw JSON data for job list:", data)  # This will print the JSON as a string
+
             jobs_dict = json.loads(data)
 
             if not isinstance(jobs_dict, dict):
@@ -81,12 +84,13 @@ def getJobData(job_id):
 
 
 def extractPoles(job_data, job_name, job_id):
-    """Extract points from job data, including 'Job_Status'."""
+    """Extract points from job data, including 'Job_Status', 'MR_Status', and 'Company'."""
     print(f"Extracting poles from job: {job_name}, Job ID: {job_id}")
     if isinstance(job_data, tuple):
         job_data = job_data[1]  # Unpack if job_data is a tuple
+
     # Get Job_Status from job data
-    job_status = job_data.get('metadata', {}).get('job_status', "")
+    job_status = job_data.get('metadata', {}).get('job_status', "Unknown")
     nodes = job_data.get("nodes", {})
 
     if not nodes:
@@ -100,16 +104,21 @@ def extractPoles(job_data, job_name, job_id):
             longitude = node_data.get('longitude')
             int_note = node_data.get('attributes', {}).get('internal_note', {}).get('button_added')
             scid = node_data.get('attributes', {}).get('scid', {}).get('auto_button')
-
-            # Extract the 'tagtext' from the 'pole_tag' dictionary
             pole_tag = None
             pole_tag_data = node_data.get('attributes', {}).get('pole_tag', {})
             if isinstance(pole_tag_data, dict):
-                # Get the first dictionary value and access 'tagtext' if it exists
                 first_tag = next(iter(pole_tag_data.values()), {})
                 pole_tag = first_tag.get('tagtext')
 
-            # Append attributes, Job_Status, and job_id for mapping Job_Name
+            # Retrieve MR_Status attribute
+            mr_status_data = node_data.get('attributes', {}).get('MR_status', {})
+            mr_status = next(iter(mr_status_data.values()), "Unknown")  # Default to "Unknown" if not found
+
+            # Retrieve Company attribute
+            company_data = node_data.get('attributes', {}).get('company', {})
+            company = next(iter(company_data.values()), "Unknown")  # Default to "Unknown" if not found
+
+            # Append attributes, Job_Status, MR_Status, Company, and job_id for mapping Job_Name
             pole_points.append({
                 "Longitude": longitude,
                 "Latitude": latitude,
@@ -117,8 +126,11 @@ def extractPoles(job_data, job_name, job_id):
                 "PoleTag": pole_tag,
                 "SCID": scid,
                 "Job_Status": job_status,
-                "job_id": job_id  # Include job_id for mapping Job_Name later
+                "MR_Status": mr_status,  # New field for MR_Status
+                "Company": company,       # New field for Company
+                "job_id": job_id          # Include job_id for mapping Job_Name later
             })
+    print("Sample Pole Points:", pole_points[:3])  # Display first few points to check the structure
     return pole_points
 
 
@@ -161,7 +173,7 @@ def savePointsToShapefile(points, filename, job_dict):
     for point in points:
         job_id = point.get("job_id")  # Retrieve job_id from point data
         point["Job_Name"] = job_dict.get(job_id, "Unknown")  # Set Job_Name or default to "Unknown"
-        point["Job_Status"] = point.get("Job_Status", "Unknown")  # Include Job_Status for each point
+        point["Job_Status"] = point.get("job_status", "Unknown")  # Include Job_Status for each point
 
         if isinstance(point.get("PoleTag"), dict) and "tagtext" in point["PoleTag"]:
             point["PoleTag"] = point["PoleTag"]["tagtext"]
@@ -181,7 +193,7 @@ def savePointsToShapefile(points, filename, job_dict):
         print(f"Error saving shapefile: {e}")
 
 def saveMasterShapefile(all_points, filename):
-    """Save the combined list of points to a master shapefile, excluding the job_id field."""
+    """Save the combined list of points to a master shapefile, including MR_Status, Company, and excluding job_id."""
     workspace_path = r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace"
     file_path = os.path.join(workspace_path, filename)
 
@@ -189,17 +201,30 @@ def saveMasterShapefile(all_points, filename):
     for point in all_points:
         point.pop("job_id", None)  # Remove 'job_id' if it exists
 
+    # Define the expected columns with default values if missing
+    for point in all_points:
+        point.setdefault("Job_Name", "Unknown")
+        point.setdefault("Job_Status", "Unknown")
+        point.setdefault("MR_Status", "Unknown")
+        point.setdefault("Company", "Unknown")
+
     # Create geometries from points
     geometries = [Point(point["Longitude"], point["Latitude"]) for point in all_points]
 
-    # Create GeoDataFrame and set CRS to WGS 1984 (EPSG:4326)
-    gdf = gpd.GeoDataFrame(all_points, geometry=geometries, crs="EPSG:4326")
+    # Create GeoDataFrame with specific columns, ensuring MR_Status and Company are included
+    gdf = gpd.GeoDataFrame(
+        all_points,
+        geometry=geometries,
+        crs="EPSG:4326",
+        columns=["Longitude", "Latitude", "MRNote", "PoleTag", "SCID", "Job_Status", "Job_Name", "MR_Status", "Company"]
+    )
 
     try:
         gdf.to_file(file_path, driver="ESRI Shapefile")
         print(f"Master shapefile successfully saved to: {file_path}")
     except Exception as e:
         print(f"Error saving master shapefile: {e}")
+
 
 def saveMasterAnchorShapefile(anchor_points, filename):
     """Save the combined list of anchor points to a master anchor shapefile, excluding unnecessary fields."""
