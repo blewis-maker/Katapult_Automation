@@ -266,7 +266,7 @@ def extractConnections(job_data, job_name, job_id):
         # Skip connections with 'reference' type
         connection_type = connection.get("attributes", {}).get("connection_type", {}).get("button_added")
         if connection_type == "reference":
-            print(f"Skipping connection {conn_id} with type 'reference'")
+            #print(f"Skipping connection {conn_id} with type 'reference'")
             continue  # Skip this connection
 
         # Fetch the node references for start and end
@@ -363,8 +363,6 @@ def main():
 
         # Fetch job data
         job_data = getJobData(job_id)
-        if i == 0:
-            print(json.dumps(job_data))  # Print JSON for the first job for debugging
 
         # If job_data retrieval was unsuccessful, skip to the next job
         if job_data is None:
