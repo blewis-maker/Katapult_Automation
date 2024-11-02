@@ -5,14 +5,17 @@ from shapely.geometry import Point, LineString
 import os
 import time
 import socket
+import re
 
 API_KEY = 'rt2JR8Rds03Ry03hQTpD9j0N01gWEULJnuY3l1_GeXA8uqUVLtXsKHUQuW5ra0lt-FklrA40qq6_J04yY0nPjlfKG1uPerclUX2gf6axkIioJadYxzOG3cPZJLRcZ2_vHPdipZWvQdICAL2zRnqnOUCGjfq4Q8aMdmA7H6z7xK7W9MEKnIiEALokmtChLtr-s6hDFko17M7xihPpNlfGN7N8D___wn55epkLMtS2eFF3JPlj_SjpFIGXYK15PJFta-BmPqCFvEwXlZEYfEf8uYOpAvCEdBn3NOMoB-P28owOJ7ZeBQf5VMFi3J5_RV2fE_XDR2LTD469Qq0y3946LQ'
 
 def getJobList():
-    """Retrieve job list from KatapultPro API and include all jobs regardless of status."""
+    """Retrieve job list from KatapultPro API and include only the specified job."""
     URL_PATH = '/api/v2/jobs'
     headers = {}
     all_jobs = []
+
+    specific_job_id = '-O-bszt-q6R0gSNTjCWw'  # ID for job FRM3_5 FRM_3-5
 
     for attempt in range(5):
         conn = None  # Initialize connection variable
@@ -21,16 +24,15 @@ def getJobList():
             conn.request("GET", f"{URL_PATH}?api_key={API_KEY}", headers=headers)
             res = conn.getresponse()
             data = res.read().decode("utf-8")
-
-            #print("Raw JSON data for job list:", data)  # This will print the JSON as a string
-
             jobs_dict = json.loads(data)
 
             if not isinstance(jobs_dict, dict):
                 raise TypeError(f"Expected a dictionary but received {type(jobs_dict)}: {jobs_dict}")
 
-            all_jobs = [{'id': job_id, 'name': job_details.get('name'), 'status': job_details.get('status')}
-                        for job_id, job_details in jobs_dict.items()]
+            # Filter to include only the specific job
+            if specific_job_id in jobs_dict:
+                job_details = jobs_dict[specific_job_id]
+                all_jobs = [{'id': specific_job_id, 'name': job_details.get('name'), 'status': job_details.get('status')}]
             break  # Exit loop if successful
 
         except (socket.error, OSError) as e:
@@ -83,9 +85,13 @@ def getJobData(job_id):
     return None
 
 
+import re
+
+
 def extractPoles(job_data, job_name, job_id):
-    """Extract points from job data, including 'Job_Status', 'MR_Status', and 'Company'."""
+    """Extract poles from job data dynamically, focusing on identifying pole attributes and excluding reference nodes."""
     print(f"Extracting poles from job: {job_name}, Job ID: {job_id}")
+
     if isinstance(job_data, tuple):
         job_data = job_data[1]  # Unpack if job_data is a tuple
 
@@ -94,44 +100,70 @@ def extractPoles(job_data, job_name, job_id):
     nodes = job_data.get("nodes", {})
 
     if not nodes:
-        print("No nodes available or nodes is not a list.")
+        print("No nodes available or nodes is not a dictionary.")
         return []
 
     pole_points = []
     for node_id, node_data in nodes.items():
-        if node_data.get('attributes', {}).get('node_type', {}).get('button_added') == 'pole':
-            latitude = node_data.get('latitude')
-            longitude = node_data.get('longitude')
-            mr_note_data = node_data.get('attributes', {}).get('mr_note', {})
-            mr_note = next(iter(mr_note_data.values()), "")  # Default to "Unknown" if not found
-            scid = node_data.get('attributes', {}).get('scid', {}).get('auto_button')
-            pole_tag = None
-            pole_tag_data = node_data.get('attributes', {}).get('pole_tag', {})
-            if isinstance(pole_tag_data, dict):
-                first_tag = next(iter(pole_tag_data.values()), {})
-                pole_tag = first_tag.get('tagtext')
+        attributes = node_data.get('attributes', {})
 
-            # Retrieve MR_Status attribute
-            mr_status_data = node_data.get('attributes', {}).get('MR_status', {})
-            mr_status = next(iter(mr_status_data.values()), "Unknown")  # Default to "Unknown" if not found
+        # Dynamic condition to detect if a node is a pole
+        node_type = attributes.get('node_type', {}).get('button_added')
+        has_pole_tag = 'pole_tag' in attributes
+        is_pole = node_type == 'pole' or has_pole_tag or 'pole' in node_id.lower()
 
-            # Retrieve Company attribute
-            company_data = node_data.get('attributes', {}).get('company', {})
-            company = next(iter(company_data.values()), "Unknown")  # Default to "Unknown" if not found
+        # Retrieve SCID attribute and filter out reference nodes
+        scid = attributes.get('scid', {}).get('auto_button', "")
 
-            # Append attributes, Job_Status, MR_Status, Company, and job_id for mapping Job_Name
-            pole_points.append({
-                "Longitude": longitude,
-                "Latitude": latitude,
-                "MRNote": mr_note,
-                "PoleTag": pole_tag,
-                "SCID": scid,
-                "Job_Status": job_status,
-                "MR_Status": mr_status,  # New field for MR_Status
-                "Company": company,       # New field for Company
-                "job_id": job_id          # Include job_id for mapping Job_Name later
-            })
-    print("Sample Pole Points:", pole_points[:3])  # Display first few points to check the structure
+        # Use regex to match SCIDs that resemble reference nodes (e.g., "107.A.A.A.A")
+        is_reference_node = bool(re.match(r'^\d+(\.[A-Z])+$', scid))
+
+        # Log node information to better understand why some nodes are being skipped
+        if not is_pole or is_reference_node:
+            print(
+                f"Skipping node {node_id}: Node type is '{node_type}', has_pole_tag is '{has_pole_tag}', SCID is '{scid}' (Reference Node: {is_reference_node})")
+            continue
+
+        # If identified as a valid pole, extract necessary data
+        latitude = node_data.get('latitude')
+        longitude = node_data.get('longitude')
+
+        if latitude is None or longitude is None:
+            print(f"Skipping node {node_id}: Missing latitude or longitude")
+            continue
+
+        # Retrieve MR note, PoleTag, MR_Status, and Company attributes
+        mr_note_data = attributes.get('mr_note', {})
+        mr_note = next(iter(mr_note_data.values()), "")
+
+        pole_tag = None
+        pole_tag_data = attributes.get('pole_tag', {})
+        if isinstance(pole_tag_data, dict):
+            first_tag = next(iter(pole_tag_data.values()), {})
+            pole_tag = first_tag.get('tagtext')
+
+        # Retrieve MR_Status attribute
+        mr_status_data = attributes.get('MR_status', {})
+        mr_status = next(iter(mr_status_data.values()), "Unknown")
+
+        # Retrieve Company attribute
+        company_data = attributes.get('company', {})
+        company = next(iter(company_data.values()), "Unknown")
+
+        # Append attributes, Job_Status, MR_Status, Company, and job_id for mapping Job_Name
+        pole_points.append({
+            "Longitude": longitude,
+            "Latitude": latitude,
+            "MRNote": mr_note,
+            "PoleTag": pole_tag,
+            "SCID": scid,
+            "Job_Status": job_status,
+            "MR_Status": mr_status,
+            "Company": company,
+            "job_id": job_id
+        })
+
+    print(f"Total poles found: {len(pole_points)}")
     return pole_points
 
 
@@ -351,6 +383,7 @@ def main():
     all_anchor_points = []  # List to store all anchor points for the master shapefile
     all_line_connections = []  # List to store all line connections for the master shapefile
 
+
     # Create a job dictionary for mapping Job_Name by job_id
     job_dict = {job['id']: job['name'] for job in all_jobs}
 
@@ -363,6 +396,17 @@ def main():
 
         # Fetch job data
         job_data = getJobData(job_id)
+
+        # Print and save job data for reference
+        if job_data:
+            print(json.dumps(job_data))  # Pretty-print the JSON data
+
+            # Save to a JSON file in the specified workspace path
+            workspace_path = r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace"
+            json_file_path = os.path.join(workspace_path, "job_data.json")
+            with open(json_file_path, "w") as json_file:
+                json.dump(job_data, json_file, indent=4)
+            print(f"Job data saved to {json_file_path}")
 
         # If job_data retrieval was unsuccessful, skip to the next job
         if job_data is None:
@@ -387,6 +431,9 @@ def main():
             line["Job_Name"] = job_dict.get(job_id, "Unknown")
         all_line_connections.extend(line_connections)  # Add line connections to the master list
 
+        print(f"Total poles found: {len(pole_points)}")
+        print(f"Total connections found: {len(line_connections)}")
+
         if TEST_FIRST_JOB_ONLY:
             break
 
@@ -408,7 +455,6 @@ def main():
         saveLineShapefile(all_line_connections, 'master_lines.shp', job_dict)
     else:
         print("No line connections found across jobs to save to master shapefile.")
-
 
 
 if __name__ == '__main__':
