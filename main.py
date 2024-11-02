@@ -10,12 +10,10 @@ import re
 API_KEY = 'rt2JR8Rds03Ry03hQTpD9j0N01gWEULJnuY3l1_GeXA8uqUVLtXsKHUQuW5ra0lt-FklrA40qq6_J04yY0nPjlfKG1uPerclUX2gf6axkIioJadYxzOG3cPZJLRcZ2_vHPdipZWvQdICAL2zRnqnOUCGjfq4Q8aMdmA7H6z7xK7W9MEKnIiEALokmtChLtr-s6hDFko17M7xihPpNlfGN7N8D___wn55epkLMtS2eFF3JPlj_SjpFIGXYK15PJFta-BmPqCFvEwXlZEYfEf8uYOpAvCEdBn3NOMoB-P28owOJ7ZeBQf5VMFi3J5_RV2fE_XDR2LTD469Qq0y3946LQ'
 
 def getJobList():
-    """Retrieve job list from KatapultPro API and include only the specified job."""
+    """Retrieve job list from KatapultPro API."""
     URL_PATH = '/api/v2/jobs'
     headers = {}
     all_jobs = []
-
-    specific_job_id = '-O-bszt-q6R0gSNTjCWw'  # ID for job FRM3_5 FRM_3-5
 
     for attempt in range(5):
         conn = None  # Initialize connection variable
@@ -29,10 +27,11 @@ def getJobList():
             if not isinstance(jobs_dict, dict):
                 raise TypeError(f"Expected a dictionary but received {type(jobs_dict)}: {jobs_dict}")
 
-            # Filter to include only the specific job
-            if specific_job_id in jobs_dict:
-                job_details = jobs_dict[specific_job_id]
-                all_jobs = [{'id': specific_job_id, 'name': job_details.get('name'), 'status': job_details.get('status')}]
+            # Retrieve all jobs without filtering for status
+            all_jobs = [
+                {'id': job_id, 'name': job_details.get('name'), 'status': job_details.get('status')}
+                for job_id, job_details in jobs_dict.items()
+            ]
             break  # Exit loop if successful
 
         except (socket.error, OSError) as e:
@@ -83,6 +82,7 @@ def getJobData(job_id):
 
     print(f"Failed to retrieve job data for job ID {job_id} after multiple attempts.")
     return None
+
 
 
 def extractPoles(job_data, job_name, job_id):
@@ -280,6 +280,7 @@ def extractConnections(job_data, job_name, job_id):
     """Extract line connections from job data using node references for start and end points, focusing on specific cable types."""
     connections = job_data.get("connections", {})
     nodes = job_data.get("nodes", {})
+    anchors = job_data.get("anchors", {})
     cables = job_data.get("cables", {})
 
     print(f"Connections data type: {type(connections)}")
@@ -324,13 +325,19 @@ def extractConnections(job_data, job_name, job_id):
 
         # Process cables to find specific wire_spec
         wire_spec = None
-        cable_id = None
         for cable_id, cable_data in cables.items():
             # Match _trace to connection ID and fetch wire_spec
             if cable_data.get("_trace") == conn_id:
                 wire_spec = cable_data.get("wire_spec", "No Spec Found")
                 print(f"Found wire_spec '{wire_spec}' for cable ID {cable_id} in connection {conn_id}")
                 break
+
+        # Check if the end node matches an anchor and update connection type if applicable
+        if end_node_id in anchors:
+            anchor = anchors.get(end_node_id)
+            if anchor:
+                connection_type = "down guy"
+                print(f"Connection {conn_id} ends at an anchor. Setting connection type to 'down guy'.")
 
         # Set connection type to "aerial cable" only if it's originally unknown
         if connection_type is None or connection_type.lower() == "unknown":
@@ -350,6 +357,9 @@ def extractConnections(job_data, job_name, job_id):
 
     print(f"Total connections found: {len(line_connections)}")
     return line_connections
+
+
+
 
 
 def saveLineShapefile(line_connections, filename, job_dict):
@@ -386,7 +396,7 @@ def saveLineShapefile(line_connections, filename, job_dict):
 
 
 def main():
-    TEST_FIRST_JOB_ONLY = True
+    TEST_FIRST_JOB_ONLY = False
     all_jobs = getJobList()
     all_pole_points = []  # List to store all pole points for the master shapefile
     all_anchor_points = []  # List to store all anchor points for the master shapefile
@@ -407,7 +417,7 @@ def main():
 
         # Print and save job data for reference
         if job_data:
-            print(json.dumps(job_data))  # Pretty-print the JSON data
+            #print(json.dumps(job_data))  # Pretty-print the JSON data
 
             # Save to a JSON file in the specified workspace path
             workspace_path = r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace"
@@ -463,6 +473,14 @@ def main():
         saveLineShapefile(all_line_connections, 'master_lines.shp', job_dict)
     else:
         print("No line connections found across jobs to save to master shapefile.")
+
+if __name__ == '__main__':
+    start_time = time.time()  # Record the start time
+    main()
+    end_time = time.time()  # Record the end time
+
+    elapsed_time = end_time - start_time
+    print(f"Total execution time: {elapsed_time:.2f} seconds")
 
 
 if __name__ == '__main__':
