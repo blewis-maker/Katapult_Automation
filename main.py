@@ -85,9 +85,6 @@ def getJobData(job_id):
     return None
 
 
-import re
-
-
 def extractPoles(job_data, job_name, job_id):
     """Extract poles from job data dynamically, focusing on identifying pole attributes and excluding reference nodes."""
     print(f"Extracting poles from job: {job_name}, Job ID: {job_id}")
@@ -232,7 +229,6 @@ def saveMasterShapefile(all_points, filename):
     workspace_path = r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace"
     file_path = os.path.join(workspace_path, filename)
 
-
     # Define the expected columns with default values if missing
     for point in all_points:
         point.pop("job_id", None)
@@ -295,11 +291,11 @@ def extractConnections(job_data, job_name, job_id):
     line_connections = []
 
     for conn_id, connection in connections.items():
-        # Skip connections with 'reference' type
-        connection_type = connection.get("attributes", {}).get("connection_type", {}).get("button_added")
-        if connection_type == "reference":
-            #print(f"Skipping connection {conn_id} with type 'reference'")
-            continue  # Skip this connection
+        # Extract connection type and filter references
+        connection_type = connection.get("attributes", {}).get("connection_type", {}).get("value")
+        if connection_type == "reference" or connection_type == "com reference":
+            print(f"Skipping connection {conn_id} with type '{connection_type}'")
+            continue
 
         # Fetch the node references for start and end
         start_node_id = connection.get("node_id_1")
@@ -319,6 +315,13 @@ def extractConnections(job_data, job_name, job_id):
             print(f"Invalid coordinates: start={start_coords}, end={end_coords}")
             continue
 
+        # Get SCID values for debugging
+        start_scid = start_node.get('attributes', {}).get('scid', {}).get('auto_button', "Unknown")
+        end_scid = end_node.get('attributes', {}).get('scid', {}).get('auto_button', "Unknown")
+
+        # Log SCID information for debugging missing connections
+        print(f"Processing connection {conn_id}: Start SCID={start_scid}, End SCID={end_scid}, Type={connection_type}")
+
         # Process cables to find specific wire_spec
         wire_spec = None
         cable_id = None
@@ -329,6 +332,10 @@ def extractConnections(job_data, job_name, job_id):
                 print(f"Found wire_spec '{wire_spec}' for cable ID {cable_id} in connection {conn_id}")
                 break
 
+        # Set connection type to "aerial cable" only if it's originally unknown
+        if connection_type is None or connection_type.lower() == "unknown":
+            connection_type = "aerial cable"
+
         line_connections.append({
             "StartX": start_coords[0],
             "StartY": start_coords[1],
@@ -336,7 +343,9 @@ def extractConnections(job_data, job_name, job_id):
             "EndY": end_coords[1],
             "ConnType": connection_type,
             "Wire_Spec": wire_spec,
-            "JobName": job_name
+            "JobName": job_name,
+            "Start_SCID": start_scid,
+            "End_SCID": end_scid
         })
 
     print(f"Total connections found: {len(line_connections)}")
@@ -382,7 +391,6 @@ def main():
     all_pole_points = []  # List to store all pole points for the master shapefile
     all_anchor_points = []  # List to store all anchor points for the master shapefile
     all_line_connections = []  # List to store all line connections for the master shapefile
-
 
     # Create a job dictionary for mapping Job_Name by job_id
     job_dict = {job['id']: job['name'] for job in all_jobs}
