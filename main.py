@@ -6,7 +6,11 @@ import os
 import time
 import socket
 import re
+# Toggle to enable/disable testing a specific job
+TEST_ONLY_SPECIFIC_JOB = True
 
+# ID of the specific job to test
+TEST_JOB_ID = "-O-bszt-q6R0gSNTjCWw"
 API_KEY = 'rt2JR8Rds03Ry03hQTpD9j0N01gWEULJnuY3l1_GeXA8uqUVLtXsKHUQuW5ra0lt-FklrA40qq6_J04yY0nPjlfKG1uPerclUX2gf6axkIioJadYxzOG3cPZJLRcZ2_vHPdipZWvQdICAL2zRnqnOUCGjfq4Q8aMdmA7H6z7xK7W9MEKnIiEALokmtChLtr-s6hDFko17M7xihPpNlfGN7N8D___wn55epkLMtS2eFF3JPlj_SjpFIGXYK15PJFta-BmPqCFvEwXlZEYfEf8uYOpAvCEdBn3NOMoB-P28owOJ7ZeBQf5VMFi3J5_RV2fE_XDR2LTD469Qq0y3946LQ'
 
 # Function to get list of jobs from KatapultPro API
@@ -94,6 +98,9 @@ def extractNodes(job_data, job_name, job_id):
     trace_data_all = job_data.get('traces', {}).get('trace_data', {})
     node_points = []
 
+    # Extract job status from job data
+    job_status = job_data.get('metadata', {}).get('job_status', "Unknown")
+
     for node_id, node_data in nodes.items():
         attributes = node_data.get('attributes', {})
         node_type = attributes.get('node_type', {}).get('-Imported')
@@ -109,7 +116,7 @@ def extractNodes(job_data, job_name, job_id):
                 print(f"Skipping node {node_id}: Missing latitude or longitude")
                 continue
 
-            # Extract additional attributes to match the schema of "FRM_3-5_Nodes_pole"
+            # Extract additional attributes
             mr_status_data = attributes.get('MR_status', {})
             mr_status = next(iter(mr_status_data.values()), "Unknown")
             company = attributes.get('pole_tag', {}).get('-Imported', {}).get('company', "Unknown")
@@ -147,6 +154,7 @@ def extractNodes(job_data, job_name, job_id):
                             feet = int(poa_height // 12)
                             inches = int(poa_height % 12)
                             poa_height = f"{feet}' {inches}\""
+
             # Extract POA height from "guying" if not found in wire
             if not poa_height and main_photo_id and main_photo_id in photo_data:
                 guying_data = photo_data[main_photo_id].get('photofirst_data', {}).get('guying', {})
@@ -167,12 +175,13 @@ def extractNodes(job_data, job_name, job_id):
                             poa_height = f"{feet}' {inches}\""
                         break
 
-            # Append the node data to the list
+            # Append the node data to the list, including job_status
             node_points.append({
                 "id": node_id,
                 "lat": latitude,
                 "lng": longitude,
                 "jobname": job_name,
+                "job_status": job_status,
                 "MR_statu": mr_status,
                 "company": company,
                 "fldcompl": fldcompl,
@@ -183,7 +192,6 @@ def extractNodes(job_data, job_name, job_id):
             })
 
     return node_points
-
 
 
 def extractAnchors(job_data, job_name, job_id):
@@ -212,6 +220,7 @@ def extractAnchors(job_data, job_name, job_id):
     return anchor_points
 # Extract connections (lines, cables, etc.) from job data
 
+# Extract connections (lines, cables, etc.) from job data
 def extractConnections(job_data, job_name, job_id):
     connections = job_data.get("connections", {})
     nodes = job_data.get("nodes", {})
@@ -225,23 +234,17 @@ def extractConnections(job_data, job_name, job_id):
 
     for conn_id, connection in connections.items():
         attributes = connection.get("attributes", {})
-        connection_type = attributes.get("connection_type", {}).get("value")
-
-        if connection_type is None:
-            connection_type = attributes.get("connection_type", {}).get("button_added")
+        connection_type = attributes.get("connection_type", {}).get("value") or attributes.get("connection_type", {}).get("button_added")
 
         if connection_type is None:
             print(f"Connection ID {conn_id} has no 'connection_type' attribute. Full attributes: {attributes}")
             connection_type = "Unknown"
-        elif not isinstance(connection_type, str):
-            print(f"Connection ID {conn_id} has an unexpected type for 'connection_type': {type(connection_type)}. Full attributes: {attributes}")
-            connection_type = "Unknown"
-        else:
-            print(f"Processing Connection ID {conn_id} with connection type: {connection_type}")
 
-        # Skip non-aerial cable connections
-        if connection_type != "aerial cable":
+        # Skip "reference" connection types
+        if connection_type.lower() == "reference":
             continue
+
+        print(f"Processing Connection ID {conn_id} with connection type: {connection_type}")
 
         # Extract start and end node IDs
         start_node_id = connection.get("node_id_1")
@@ -266,80 +269,49 @@ def extractConnections(job_data, job_name, job_id):
             print(f"Invalid coordinates for connection ID {conn_id}")
             continue
 
-        # Find the main photo associated with this connection in the midpoint_section
-        main_photo_id = None
-        sections = connection.get("sections", {}).get("midpoint_section", {})
-        photos_dict = sections.get("photos", {})
+        # Initialize mid_ht to None
+        mid_ht = None
 
-        # Debugging: Print the photos dictionary for verification
-        print(f"Photos dictionary for connection {conn_id}: {json.dumps(photos_dict, indent=2)}")
+        # Only apply mid_ht logic to "aerial" connection type
+        if connection_type.lower() == "aerial cable":
+            # Find the main photo associated with this connection in the midpoint_section
+            main_photo_id = None
+            sections = connection.get("sections", {}).get("midpoint_section", {})
+            photos_dict = sections.get("photos", {})
 
-        # Loop through photos and find the one with association "main"
-        for photo_id, photo_details in photos_dict.items():
-            if photo_details.get("association") == "main":
-                main_photo_id = photo_id
-                print(f"Found main photo ID for connection {conn_id}: {main_photo_id}")
-                break
+            # Loop through photos and find the one with association "main"
+            for photo_id, photo_details in photos_dict.items():
+                if photo_details.get("association") == "main":
+                    main_photo_id = photo_id
+                    print(f"Found main photo ID for connection {conn_id}: {main_photo_id}")
+                    break
 
-        if not main_photo_id:
-            print(f"No main photo found for connection ID {conn_id}")
-            mid_ht = None
-        else:
-            # Use the main_photo_id to look up the photo in the "photos" dictionary
-            main_photo_details = photos.get(main_photo_id, {})
-
-            if not main_photo_details:
-                print(f"Main photo ID {main_photo_id} not found in 'photos'. Available keys are: {list(photos.keys())}")
-                mid_ht = None
-            else:
-                # Access the photofirst_data within the main_photo_details
+            if main_photo_id and main_photo_id in photos:
+                main_photo_details = photos.get(main_photo_id, {})
                 photofirst_entry = main_photo_details.get("photofirst_data", {})
 
-                if not photofirst_entry:
-                    print(f"Photofirst data not found for main photo ID {main_photo_id}.")
-                    mid_ht = None
-                else:
-                    # Debugging: Print the photofirst entry found
-                    print(f"Photofirst data for main photo ID {main_photo_id}: {json.dumps(photofirst_entry, indent=2)}")
+                wires = photofirst_entry.get("wire", {})
+                matching_trace_id = None
 
-                    wires = photofirst_entry.get("wire", {})
-                    if not wires:
-                        print(f"No wire data found in photofirst data for main photo ID {main_photo_id}.")
-                        mid_ht = None
-                    else:
-                        # Debugging: Print the wire data in main photo
-                        print(f"Wires data for main photo ID {main_photo_id}: {json.dumps(wires, indent=2)}")
+                for wire_id, wire_info in wires.items():
+                    trace_id = wire_info.get("_trace")
+                    trace_data = job_data.get("traces", {}).get("trace_data", {}).get(trace_id, {})
+                    company = trace_data.get("company")
+                    proposed = trace_data.get("proposed")
 
-                        # Step 4: Collect all "_trace" IDs
-                        matching_trace_id = None
+                    if company == "Clearnetworx" and proposed:
+                        matching_trace_id = trace_id
+                        break
 
-                        for wire_id, wire_info in wires.items():
-                            trace_id = wire_info.get("_trace")
-                            trace_data = job_data.get("traces", {}).get("trace_data", {}).get(trace_id, {})
-                            company = trace_data.get("company")
-                            proposed = trace_data.get("proposed")
-
-                            # Debugging: Print trace information for each wire
-                            print(f"Wire ID: {wire_id}, Trace ID: {trace_id}, Company: {company}, Proposed: {proposed}")
-
-                            if company == "Clearnetworx" and proposed:
-                                matching_trace_id = trace_id
-                                break
-
-                        if not matching_trace_id:
-                            print(f"No matching trace found for connection ID {conn_id}.")
-                            mid_ht = None
-                        else:
-                            # Step 5: Retrieve "_measured_height" for the wire matching the trace
-                            for wire_id, wire_info in wires.items():
-                                if wire_info.get("_trace") == matching_trace_id:
-                                    mid_ht = wire_info.get("_measured_height")
-                                    print(f"Found mid_ht for connection ID {conn_id}: {mid_ht}")
-                                    if mid_ht is not None:
-                                        feet = int(mid_ht // 12)
-                                        inches = int(mid_ht % 12)
-                                        mid_ht = f"{feet}' {inches}\""
-                                    break
+                if matching_trace_id:
+                    for wire_id, wire_info in wires.items():
+                        if wire_info.get("_trace") == matching_trace_id:
+                            mid_ht = wire_info.get("_measured_height")
+                            if mid_ht is not None:
+                                feet = int(mid_ht // 12)
+                                inches = int(mid_ht % 12)
+                                mid_ht = f"{feet}' {inches}\""
+                            break
 
         # Append connection to list
         line_connections.append({
@@ -359,6 +331,7 @@ def extractConnections(job_data, job_name, job_id):
     return line_connections
 
 
+
 def savePointsToShapefile(points, filename):
     workspace_path = r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace"
     file_path = os.path.join(workspace_path, filename.replace('.shp', '.gpkg'))
@@ -372,6 +345,7 @@ def savePointsToShapefile(points, filename):
         'tag': 'pole tag',
         'fldcompl': 'collected',
         'jobname': 'jobname',
+        "job_status': 'job_status',"
         'MR_statu': 'mr_status',
         'pole_spec': 'pole_spec',
         'POA_Height': 'att_ht',
@@ -427,38 +401,76 @@ def saveLineShapefile(line_connections, filename):
         print(f"Error saving line GeoPackage: {e}")
 
 # Function to save nodes to a GeoPackage
-def saveMasterNodesToGeoPackage(all_nodes, filename):
+def saveMasterGeoPackage(all_nodes, all_connections, all_anchors, filename):
     workspace_path = r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace"
     file_path = os.path.join(workspace_path, filename.replace('.shp', '.gpkg'))
-    geometries = [Point(node["lng"], node["lat"]) for node in all_nodes]
 
-    gdf = gpd.GeoDataFrame(all_nodes, geometry=geometries, crs="EPSG:4326")
+    # Save nodes as point layer
+    if all_nodes:
+        node_geometries = [Point(node["lng"], node["lat"]) for node in all_nodes]
+        gdf_nodes = gpd.GeoDataFrame(all_nodes, geometry=node_geometries, crs="EPSG:4326")
 
-    # Rename columns
-    gdf.rename(columns={
-        'company': 'utility',
-        'tag': 'pole tag',
-        'fldcompl': 'collected',
-        'jobname': 'jobname',
-        'job_status': 'job_status',
-        'MR_statu': 'mr_status',
-        'pole_spec': 'pole_spec',
-        'POA_Height': 'att_ht',
-        'lat': 'latitude',
-        'lng': 'longitude'
-    }, inplace=True)
+        # Rename columns
+        gdf_nodes.rename(columns={
+            'company': 'utility',
+            'tag': 'pole tag',
+            'fldcompl': 'collected',
+            'jobname': 'jobname',
+            'job_status': 'job_status',
+            'MR_statu': 'mr_status',
+            'pole_spec': 'pole_spec',
+            'POA_Height': 'att_ht',
+            'lat': 'latitude',
+            'lng': 'longitude'
+        }, inplace=True)
 
-    # Remove unwanted columns, ignore if they don't exist
-    gdf.drop(columns=['pole_class', 'pole_height', 'id'], errors='ignore', inplace=True)
+        # Remove unwanted columns
+        gdf_nodes.drop(columns=['pole_class', 'pole_height', 'id'], errors='ignore', inplace=True)
 
-    # Save to file
-    try:
-        gdf.to_file(file_path, driver="GPKG")  # Switched to GeoPackage for better flexibility
-        print(f"Master nodes GeoPackage successfully saved to: {file_path}")
-    except Exception as e:
-        print(f"Error saving master nodes GeoPackage: {e}")
+        if not gdf_nodes.empty:
+            try:
+                gdf_nodes.to_file(file_path, layer='poles', driver="GPKG", mode='w', OVERWRITE="YES")
+                print(f"Nodes layer successfully saved to: {file_path}")
+            except Exception as e:
+                print(f"Error saving nodes layer to GeoPackage: {e}")
 
-# Function to save line connections to a GeoPackage
+    # Save connections as line layer
+    if all_connections:
+        line_geometries = [
+            LineString([(line["StartX"], line["StartY"]), (line["EndX"], line["EndY"])])
+            for line in all_connections
+        ]
+        gdf_connections = gpd.GeoDataFrame(all_connections, geometry=line_geometries, crs="EPSG:4326")
+
+        # Drop unnecessary columns from connections
+        gdf_connections.drop(columns=['StartX', 'StartY', 'EndX', 'EndY', 'job_id'], errors='ignore', inplace=True)
+
+        if not gdf_connections.empty:
+            try:
+                gdf_connections.to_file(file_path, layer='connections', driver="GPKG", mode='w', OVERWRITE="YES")
+                print(f"Connections layer successfully saved to: {file_path}")
+            except Exception as e:
+                print(f"Error saving connections layer to GeoPackage: {e}")
+
+    # Save anchors as point layer
+    if all_anchors:
+        anchor_geometries = [Point(anchor["longitude"], anchor["latitude"]) for anchor in all_anchors]
+        gdf_anchors = gpd.GeoDataFrame(all_anchors, geometry=anchor_geometries, crs="EPSG:4326")
+
+        # Rename columns
+        gdf_anchors.rename(columns={
+            'longitude': 'longitude',
+            'latitude': 'latitude',
+            'anchor_spec': 'anchor_spec'
+        }, inplace=True)
+
+        if not gdf_anchors.empty:
+            try:
+                gdf_anchors.to_file(file_path, layer='anchors', driver="GPKG", mode='w', OVERWRITE="YES")
+                print(f"Anchors layer successfully saved to: {file_path}")
+            except Exception as e:
+                print(f"Error saving anchors layer to GeoPackage: {e}")
+
 # Function to save line connections to a GeoPackage
 def saveMasterConnectionsToGeoPackage(all_connections, filename):
     workspace_path = r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace"
@@ -559,35 +571,46 @@ def saveMasterGeoPackage(all_nodes, all_connections, all_anchors, filename):
 # Main function
 # Main function to run the job for testing
 def main():
-    # Test a specific job ID
-    test_job_id = "-O0l1U2kce21XnFGPvLy"
+    all_jobs = []
+
+    if TEST_ONLY_SPECIFIC_JOB:
+        all_jobs = [{'id': TEST_JOB_ID, 'name': 'Test Job'}]
+    else:
+        all_jobs = getJobList()
+
     all_nodes = []
     all_connections = []
     all_anchors = []
 
-    job_name = "Test Job"
-    print(f"Processing job: {job_name} (ID: {test_job_id})")
+    if not all_jobs:
+        print("No jobs found.")
+        return
 
-    job_data = getJobData(test_job_id)
+    for job in all_jobs:
+        job_id = job['id']
+        job_name = job['name']
+        print(f"Processing job: {job_name} (ID: {job_id})")
 
-    if job_data:
-        nodes = extractNodes(job_data, job_name, test_job_id)
-        connections = extractConnections(job_data, job_name, test_job_id)
-        anchors = extractAnchors(job_data, job_name, test_job_id)
+        job_data = getJobData(job_id)
 
-        if nodes:
-            all_nodes.extend(nodes)
-        if connections:
-            all_connections.extend(connections)
-        if anchors:
-            all_anchors.extend(anchors)
+        if job_data:
+            nodes = extractNodes(job_data, job_name, job_id)
+            connections = extractConnections(job_data, job_name, job_id)
+            anchors = extractAnchors(job_data, job_name, job_id)
+
+            if nodes:
+                all_nodes.extend(nodes)
+            if connections:
+                all_connections.extend(connections)
+            if anchors:
+                all_anchors.extend(anchors)
 
     # Only save if data is present
     if all_nodes or all_connections or all_anchors:
         # Save all nodes, connections, and anchors to master GeoPackages
-        saveMasterGeoPackage(all_nodes, all_connections, all_anchors, "Test_Master.gpkg")
+        saveMasterGeoPackage(all_nodes, all_connections, all_anchors, "Master.gpkg")
     else:
-        print("No data extracted for this job. Nothing to save.")
+        print("No data extracted for any job. Nothing to save.")
 
 if __name__ == "__main__":
     start_time = time.time()  # Record the start time
