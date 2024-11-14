@@ -7,10 +7,10 @@ import time
 import socket
 import re
 # Toggle to enable/disable testing a specific job
-TEST_ONLY_SPECIFIC_JOB = True
+TEST_ONLY_SPECIFIC_JOB = False
 
 # ID of the specific job to test
-TEST_JOB_ID = "-O-bszt-q6R0gSNTjCWw"
+TEST_JOB_ID = "-NN83q4c0i6H3-C8zISg"
 API_KEY = 'rt2JR8Rds03Ry03hQTpD9j0N01gWEULJnuY3l1_GeXA8uqUVLtXsKHUQuW5ra0lt-FklrA40qq6_J04yY0nPjlfKG1uPerclUX2gf6axkIioJadYxzOG3cPZJLRcZ2_vHPdipZWvQdICAL2zRnqnOUCGjfq4Q8aMdmA7H6z7xK7W9MEKnIiEALokmtChLtr-s6hDFko17M7xihPpNlfGN7N8D___wn55epkLMtS2eFF3JPlj_SjpFIGXYK15PJFta-BmPqCFvEwXlZEYfEf8uYOpAvCEdBn3NOMoB-P28owOJ7ZeBQf5VMFi3J5_RV2fE_XDR2LTD469Qq0y3946LQ'
 
 # Function to get list of jobs from KatapultPro API
@@ -68,6 +68,13 @@ def getJobData(job_id):
                 print("Rate limit exceeded. Retrying after delay...")
                 time.sleep(5)
                 continue
+                # Save job data to a file if testing a specific job
+            if TEST_ONLY_SPECIFIC_JOB:
+                workspace_path = r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace"
+                file_path = os.path.join(workspace_path, f"test_job_{job_id.replace('/', '_')}.json")
+                with open(file_path, 'w') as f:
+                    json.dump(job_data, f, indent=2)
+                print(f"Job data saved to: {file_path}")
             return job_data
 
         except json.JSONDecodeError:
@@ -86,7 +93,8 @@ def getJobData(job_id):
     print(f"Failed to retrieve job data for job ID {job_id} after multiple attempts.")
     print(f"Job Data for {job_id}:\n{json.dumps(job_data, indent=2)}")
     return job_data
-# Extract nodes (poles, anchors, etc.) from job data
+
+
 # Extract nodes (poles, anchors, etc.) from job data
 def extractNodes(job_data, job_name, job_id):
     nodes = job_data.get("nodes", {})
@@ -101,14 +109,19 @@ def extractNodes(job_data, job_name, job_id):
     # Extract job status from job data
     job_status = job_data.get('metadata', {}).get('job_status', "Unknown")
 
+    pole_count = 0
+
     for node_id, node_data in nodes.items():
         attributes = node_data.get('attributes', {})
-        node_type = attributes.get('node_type', {}).get('-Imported')
+
+        # Modified logic to identify poles
+        node_type = attributes.get('node_type', {}).get('-Imported', '').lower()
         has_pole_tag = 'pole_tag' in attributes
-        is_pole = (node_type == 'pole' or has_pole_tag or 'pole' in node_id.lower()) and node_type != 'reference'
+        is_pole = node_type == 'pole' or has_pole_tag or 'pole' in node_id.lower()
         is_anchor = node_type == 'new anchor'
 
-        if is_pole or is_anchor:
+        # Include all nodes if they have latitude and longitude and have not been explicitly marked as "reference"
+        if is_pole or is_anchor or node_type == '':
             latitude = node_data.get('latitude')
             longitude = node_data.get('longitude')
 
@@ -180,17 +193,21 @@ def extractNodes(job_data, job_name, job_id):
                 "id": node_id,
                 "lat": latitude,
                 "lng": longitude,
-                "jobname": job_name,
                 "job_status": job_status,
-                "MR_statu": mr_status,
+                "mr_status": mr_status,
                 "company": company,
                 "fldcompl": fldcompl,
                 "pole_class": pole_class,
+                "pole_height": pole_height,
+                "pole_spec": pole_spec,
                 "tag": tag,
                 "scid": scid,
-                "POA_Height": poa_height
+                "poa_height": poa_height,
             })
 
+            pole_count += 1
+
+    print(f"Total pole nodes found: {pole_count}")
     return node_points
 
 
@@ -244,7 +261,7 @@ def extractConnections(job_data, job_name, job_id):
         if connection_type.lower() == "reference":
             continue
 
-        print(f"Processing Connection ID {conn_id} with connection type: {connection_type}")
+        #print(f"Processing Connection ID {conn_id} with connection type: {connection_type}")
 
         # Extract start and end node IDs
         start_node_id = connection.get("node_id_1")
@@ -283,7 +300,7 @@ def extractConnections(job_data, job_name, job_id):
             for photo_id, photo_details in photos_dict.items():
                 if photo_details.get("association") == "main":
                     main_photo_id = photo_id
-                    print(f"Found main photo ID for connection {conn_id}: {main_photo_id}")
+                    #print(f"Found main photo ID for connection {conn_id}: {main_photo_id}")
                     break
 
             if main_photo_id and main_photo_id in photos:
@@ -325,7 +342,7 @@ def extractConnections(job_data, job_name, job_id):
             "mid_ht": mid_ht
         })
 
-        print(f"Connection ID: {conn_id}, mid_ht: {mid_ht}")
+        #print(f"Connection ID: {conn_id}, mid_ht: {mid_ht}")
 
     print(f"Total connections extracted: {len(line_connections)}")
     return line_connections
@@ -470,6 +487,8 @@ def saveMasterGeoPackage(all_nodes, all_connections, all_anchors, filename):
                 print(f"Anchors layer successfully saved to: {file_path}")
             except Exception as e:
                 print(f"Error saving anchors layer to GeoPackage: {e}")
+        # Overwrite the Feature Service in ArcGIS Enterprise
+    overwriteFeatureService(file_path)
 
 # Function to save line connections to a GeoPackage
 def saveMasterConnectionsToGeoPackage(all_connections, filename):
