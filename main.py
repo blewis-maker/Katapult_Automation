@@ -6,11 +6,12 @@ import os
 import time
 import socket
 import re
+from datetime import datetime
 # Toggle to enable/disable testing a specific job
 TEST_ONLY_SPECIFIC_JOB = False
 
 # ID of the specific job to test
-TEST_JOB_ID = "-NN83q4c0i6H3-C8zISg"
+TEST_JOB_ID = "-N8_KqTOL_T5E1bEFcJW"
 API_KEY = 'rt2JR8Rds03Ry03hQTpD9j0N01gWEULJnuY3l1_GeXA8uqUVLtXsKHUQuW5ra0lt-FklrA40qq6_J04yY0nPjlfKG1uPerclUX2gf6axkIioJadYxzOG3cPZJLRcZ2_vHPdipZWvQdICAL2zRnqnOUCGjfq4Q8aMdmA7H6z7xK7W9MEKnIiEALokmtChLtr-s6hDFko17M7xihPpNlfGN7N8D___wn55epkLMtS2eFF3JPlj_SjpFIGXYK15PJFta-BmPqCFvEwXlZEYfEf8uYOpAvCEdBn3NOMoB-P28owOJ7ZeBQf5VMFi3J5_RV2fE_XDR2LTD469Qq0y3946LQ'
 
 # Function to get list of jobs from KatapultPro API
@@ -95,7 +96,6 @@ def getJobData(job_id):
     return job_data
 
 
-# Extract nodes (poles, anchors, etc.) from job data
 def extractNodes(job_data, job_name, job_id):
     nodes = job_data.get("nodes", {})
     if not nodes:
@@ -114,101 +114,108 @@ def extractNodes(job_data, job_name, job_id):
     for node_id, node_data in nodes.items():
         attributes = node_data.get('attributes', {})
 
-        # Modified logic to identify poles
-        node_type = attributes.get('node_type', {}).get('-Imported', '').lower()
+        # Identify the node type and check if it is a pole
+        node_type_data = attributes.get('node_type', {})
+
+        # Handle different data types for node_type_data
+        node_type = ""
+        if isinstance(node_type_data, dict):
+            node_type = (
+                node_type_data.get('-Imported', '') or
+                node_type_data.get('button_added', '')
+            )
+        elif isinstance(node_type_data, list):
+            # If it's a list, retrieve the first valid string value if possible
+            node_type = next((item for item in node_type_data if isinstance(item, str)), "")
+        elif isinstance(node_type_data, str):
+            # If it's a string, use it directly
+            node_type = node_type_data
+
+        # Ensure node_type is a string and convert to lowercase
+        if isinstance(node_type, str):
+            node_type = node_type.lower()
+
         has_pole_tag = 'pole_tag' in attributes
         is_pole = node_type == 'pole' or has_pole_tag or 'pole' in node_id.lower()
-        is_anchor = node_type == 'new anchor'
 
-        # Include all nodes if they have latitude and longitude and have not been explicitly marked as "reference"
-        if is_pole or is_anchor or node_type == '':
-            latitude = node_data.get('latitude')
-            longitude = node_data.get('longitude')
+        # Skip nodes that are reference nodes
+        is_reference = node_type == 'reference'
+        if not is_pole or is_reference:
+            continue
 
-            if latitude is None or longitude is None:
-                print(f"Skipping node {node_id}: Missing latitude or longitude")
-                continue
+        # Removed the requirement for 'done' attribute
+        # Extract latitude and longitude
+        latitude = node_data.get('latitude')
+        longitude = node_data.get('longitude')
 
-            # Extract additional attributes
-            mr_status_data = attributes.get('MR_status', {})
-            mr_status = next(iter(mr_status_data.values()), "Unknown")
-            company = attributes.get('pole_tag', {}).get('-Imported', {}).get('company', "Unknown")
-            fldcompl_value = attributes.get('field_completed', {}).get('value', "Unknown")
-            fldcompl = 'yes' if fldcompl_value == 1 else 'no' if fldcompl_value == 2 else 'Unknown'
-            pole_class = attributes.get('pole_class', {}).get('-Imported', "Unknown")
-            pole_height = attributes.get('pole_height', {}).get('-Imported', "Unknown")
-            pole_spec = attributes.get('pole_spec', {}).get('button_calced', "Unknown")
-            tag = attributes.get('pole_tag', {}).get('-Imported', {}).get('tagtext', "Unknown")
-            scid = attributes.get('scid', {}).get('auto_button', "Unknown")
+        if latitude is None or longitude is None:
+            print(f"Skipping node {node_id}: Missing latitude or longitude")
+            continue
 
-            # Extract POA height using main photo wire data
-            poa_height = ""
+        # Extract additional attributes
+        mr_status_data = attributes.get('MR_status', {})
+        mr_status = next(iter(mr_status_data.values()), "Unknown")
+        company = (
+                attributes.get('pole_tag', {}).get('-Imported', {}).get('company', "Unknown") or
+                attributes.get('pole_tag', {}).get('button_added', {}).get('company', "Unknown")
+        )
+        fldcompl_value = attributes.get('field_completed', {}).get('value', "Unknown")
+        fldcompl = 'yes' if fldcompl_value == 1 else 'no' if fldcompl_value == 2 else 'Unknown'
+        pole_class = (
+                attributes.get('pole_class', {}).get('-Imported', "Unknown") or
+                attributes.get('pole_class', {}).get(next(iter(attributes.get('pole_class', {})), "Unknown"))
+        )
+        pole_height = (
+                attributes.get('pole_height', {}).get('-Imported', "Unknown") or
+                attributes.get('pole_height', {}).get(next(iter(attributes.get('pole_height', {})), "Unknown"))
+        )
+        pole_spec = attributes.get('pole_spec', {}).get('button_calced', "Unknown")
+        tag = (
+                attributes.get('pole_tag', {}).get('-Imported', {}).get('tagtext', "Unknown") or
+                attributes.get('pole_tag', {}).get('button_added', {}).get('tagtext', "Unknown")
+        )
+        scid = attributes.get('scid', {}).get('auto_button', "Unknown")
 
-            # Locate the main photo
-            photos = node_data.get('photos', {})
-            main_photo_id = next(
-                (photo_id for photo_id, photo_info in photos.items() if photo_info.get('association') == 'main'), None)
+        # Extract POA height using main photo wire data
+        poa_height = ""
 
-            if main_photo_id and main_photo_id in photo_data:
-                photofirst_data = photo_data[main_photo_id].get('photofirst_data', {}).get('wire', {})
-                for wire_id, wire_info in photofirst_data.items():
-                    trace_id = wire_info.get('_trace')
-                    trace_data = trace_data_all.get(trace_id, {})
+        # Locate the main photo
+        photos = node_data.get('photos', {})
+        main_photo_id = next(
+            (photo_id for photo_id, photo_info in photos.items() if photo_info.get('association') == 'main'), None)
 
-                    # Check if the trace matches the desired conditions
-                    if (trace_data.get('company') == 'Clearnetworx' and
-                            trace_data.get('proposed', False) and
-                            trace_data.get('_trace_type') == 'cable' and
-                            trace_data.get('cable_type') == 'Fiber Optic Com'):
+        if main_photo_id and main_photo_id in photo_data:
+            photofirst_data = photo_data[main_photo_id].get('photofirst_data', {}).get('wire', {})
+            for wire_id, wire_info in photofirst_data.items():
+                trace_id = wire_info.get('_trace')
+                trace_data = trace_data_all.get(trace_id, {})
+                if trace_data.get('company') == "Clearnetworx" and trace_data.get('proposed'):
+                    measured_height = wire_info.get('_measured_height', None)
+                    if measured_height is not None:
+                        poa_height = f"{int(measured_height // 12)}' - {int(measured_height % 12)}\""
 
-                        # Extract the measured height and convert to feet and inches
-                        poa_height = wire_info.get('_measured_height')
-                        if poa_height is not None:
-                            feet = int(poa_height // 12)
-                            inches = int(poa_height % 12)
-                            poa_height = f"{feet}' {inches}\""
+        # Append node information including job_status
+        node_points.append({
+            "id": node_id,
+            "lat": latitude,
+            "lng": longitude,
+            "job_status": job_status,
+            "mr_status": mr_status,
+            "company": company,
+            "fldcompl": fldcompl,
+            "pole_class": pole_class,
+            "pole_height": pole_height,
+            "pole_spec": pole_spec,
+            "tag": tag,
+            "scid": scid,
+            "poa_height": poa_height,
+        })
 
-            # Extract POA height from "guying" if not found in wire
-            if not poa_height and main_photo_id and main_photo_id in photo_data:
-                guying_data = photo_data[main_photo_id].get('photofirst_data', {}).get('guying', {})
-                for wire_id, wire_info in guying_data.items():
-                    trace_id = wire_info.get('_trace')
-                    trace_data = trace_data_all.get(trace_id, {})
-
-                    # Check if the trace matches the desired conditions for down guy
-                    if (trace_data.get('company') == 'Clearnetworx' and
-                            trace_data.get('proposed', False) and
-                            trace_data.get('_trace_type') == 'down_guy'):
-
-                        # Extract the measured height and convert to feet and inches
-                        poa_height = wire_info.get('_measured_height')
-                        if poa_height is not None:
-                            feet = int(poa_height // 12)
-                            inches = int(poa_height % 12)
-                            poa_height = f"{feet}' {inches}\""
-                        break
-
-            # Append the node data to the list, including job_status
-            node_points.append({
-                "id": node_id,
-                "lat": latitude,
-                "lng": longitude,
-                "job_status": job_status,
-                "mr_status": mr_status,
-                "company": company,
-                "fldcompl": fldcompl,
-                "pole_class": pole_class,
-                "pole_height": pole_height,
-                "pole_spec": pole_spec,
-                "tag": tag,
-                "scid": scid,
-                "poa_height": poa_height,
-            })
-
-            pole_count += 1
+        pole_count += 1
 
     print(f"Total pole nodes found: {pole_count}")
     return node_points
+
 
 
 def extractAnchors(job_data, job_name, job_id):
@@ -524,7 +531,9 @@ def saveMasterGeoPackage(all_nodes, all_connections, all_anchors, filename):
 
     # Save nodes as point layer
     if all_nodes:
+        date_stamp = datetime.now().strftime("%Y-%m-%d")
         node_geometries = [Point(node["lng"], node["lat"]) for node in all_nodes]
+        filename = f"Master_{date_stamp}.gpkg"
         gdf_nodes = gpd.GeoDataFrame(all_nodes, geometry=node_geometries, crs="EPSG:4326")
 
         # Rename columns
