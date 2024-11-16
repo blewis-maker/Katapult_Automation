@@ -6,12 +6,26 @@ import os
 import time
 import socket
 import re
+import pandas as pd
 from datetime import datetime
+from openpyxl import Workbook
+from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl import load_workbook
+from openpyxl.cell import MergedCell
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
+
+
 # Toggle to enable/disable testing a specific job
-TEST_ONLY_SPECIFIC_JOB = False
+TEST_ONLY_SPECIFIC_JOB = True
 
 # ID of the specific job to test
-TEST_JOB_ID = "-N8_KqTOL_T5E1bEFcJW"
+TEST_JOB_ID = "-O-nlOLQbPIYhHwJCPDN"
 API_KEY = 'rt2JR8Rds03Ry03hQTpD9j0N01gWEULJnuY3l1_GeXA8uqUVLtXsKHUQuW5ra0lt-FklrA40qq6_J04yY0nPjlfKG1uPerclUX2gf6axkIioJadYxzOG3cPZJLRcZ2_vHPdipZWvQdICAL2zRnqnOUCGjfq4Q8aMdmA7H6z7xK7W9MEKnIiEALokmtChLtr-s6hDFko17M7xihPpNlfGN7N8D___wn55epkLMtS2eFF3JPlj_SjpFIGXYK15PJFta-BmPqCFvEwXlZEYfEf8uYOpAvCEdBn3NOMoB-P28owOJ7ZeBQf5VMFi3J5_RV2fE_XDR2LTD469Qq0y3946LQ'
 
 # Function to get list of jobs from KatapultPro API
@@ -96,6 +110,7 @@ def getJobData(job_id):
     return job_data
 
 
+# Extract nodes (poles, anchors, etc.) from job data
 def extractNodes(job_data, job_name, job_id):
     nodes = job_data.get("nodes", {})
     if not nodes:
@@ -109,114 +124,108 @@ def extractNodes(job_data, job_name, job_id):
     # Extract job status from job data
     job_status = job_data.get('metadata', {}).get('job_status', "Unknown")
 
-    pole_count = 0
-
     for node_id, node_data in nodes.items():
         attributes = node_data.get('attributes', {})
-
-        # Identify the node type and check if it is a pole
-        node_type_data = attributes.get('node_type', {})
-
-        # Handle different data types for node_type_data
-        node_type = ""
-        if isinstance(node_type_data, dict):
-            node_type = (
-                node_type_data.get('-Imported', '') or
-                node_type_data.get('button_added', '')
-            )
-        elif isinstance(node_type_data, list):
-            # If it's a list, retrieve the first valid string value if possible
-            node_type = next((item for item in node_type_data if isinstance(item, str)), "")
-        elif isinstance(node_type_data, str):
-            # If it's a string, use it directly
-            node_type = node_type_data
-
-        # Ensure node_type is a string and convert to lowercase
-        if isinstance(node_type, str):
-            node_type = node_type.lower()
-
+        node_type = attributes.get('node_type', {}).get('-Imported')
         has_pole_tag = 'pole_tag' in attributes
-        is_pole = node_type == 'pole' or has_pole_tag or 'pole' in node_id.lower()
+        is_pole = (node_type == 'pole' or has_pole_tag or 'pole' in node_id.lower()) and node_type != 'reference'
+        is_anchor = node_type == 'new anchor'
 
-        # Skip nodes that are reference nodes
-        is_reference = node_type == 'reference'
-        if not is_pole or is_reference:
-            continue
+        if is_pole or is_anchor:
+            latitude = node_data.get('latitude')
+            longitude = node_data.get('longitude')
 
-        # Removed the requirement for 'done' attribute
-        # Extract latitude and longitude
-        latitude = node_data.get('latitude')
-        longitude = node_data.get('longitude')
+            if latitude is None or longitude is None:
+                print(f"Skipping node {node_id}: Missing latitude or longitude")
+                continue
 
-        if latitude is None or longitude is None:
-            print(f"Skipping node {node_id}: Missing latitude or longitude")
-            continue
+            # Extract additional attributes
+            mr_status = "Unknown"
+            if 'proposed_pole_spec' in attributes:
+                mr_status = "PCO Required"
+            else:
+                mr_state = attributes.get('mr_state', {}).get('auto_calced', "Unknown")
+                warning_present = 'warning' in attributes
+                if mr_state == "No MR" and not warning_present:
+                    mr_status = "No MR"
+                elif mr_state == "MR Resolved" and not warning_present:
+                    mr_status = "Comm MR"
+                elif mr_state == "MR Resolved" and warning_present:
+                    mr_status = "Electric MR"
 
-        # Extract additional attributes
-        mr_status_data = attributes.get('MR_status', {})
-        mr_status = next(iter(mr_status_data.values()), "Unknown")
-        company = (
-                attributes.get('pole_tag', {}).get('-Imported', {}).get('company', "Unknown") or
-                attributes.get('pole_tag', {}).get('button_added', {}).get('company', "Unknown")
-        )
-        fldcompl_value = attributes.get('field_completed', {}).get('value', "Unknown")
-        fldcompl = 'yes' if fldcompl_value == 1 else 'no' if fldcompl_value == 2 else 'Unknown'
-        pole_class = (
-                attributes.get('pole_class', {}).get('-Imported', "Unknown") or
-                attributes.get('pole_class', {}).get(next(iter(attributes.get('pole_class', {})), "Unknown"))
-        )
-        pole_height = (
-                attributes.get('pole_height', {}).get('-Imported', "Unknown") or
-                attributes.get('pole_height', {}).get(next(iter(attributes.get('pole_height', {})), "Unknown"))
-        )
-        pole_spec = attributes.get('pole_spec', {}).get('button_calced', "Unknown")
-        tag = (
-                attributes.get('pole_tag', {}).get('-Imported', {}).get('tagtext', "Unknown") or
-                attributes.get('pole_tag', {}).get('button_added', {}).get('tagtext', "Unknown")
-        )
-        scid = attributes.get('scid', {}).get('auto_button', "Unknown")
+            company = attributes.get('pole_tag', {}).get('-Imported', {}).get('company', "Unknown")
+            fldcompl_value = attributes.get('field_completed', {}).get('value', "Unknown")
+            fldcompl = 'yes' if fldcompl_value == 1 else 'no' if fldcompl_value == 2 else 'Unknown'
+            pole_class = attributes.get('pole_class', {}).get('-Imported', "Unknown")
+            pole_height = attributes.get('pole_height', {}).get('-Imported', "Unknown")
+            pole_spec = attributes.get('pole_spec', {}).get('button_calced', "Unknown")
+            tag = attributes.get('pole_tag', {}).get('-Imported', {}).get('tagtext', "Unknown")
+            scid = attributes.get('scid', {}).get('auto_button', "Unknown")
 
-        # Extract POA height using main photo wire data
-        poa_height = ""
+            # Extract POA height using main photo wire data
+            poa_height = ""
 
-        # Locate the main photo
-        photos = node_data.get('photos', {})
-        main_photo_id = next(
-            (photo_id for photo_id, photo_info in photos.items() if photo_info.get('association') == 'main'), None)
+            # Locate the main photo
+            photos = node_data.get('photos', {})
+            main_photo_id = next(
+                (photo_id for photo_id, photo_info in photos.items() if photo_info.get('association') == 'main'), None)
 
-        if main_photo_id and main_photo_id in photo_data:
-            photofirst_data = photo_data[main_photo_id].get('photofirst_data', {}).get('wire', {})
-            for wire_id, wire_info in photofirst_data.items():
-                trace_id = wire_info.get('_trace')
-                trace_data = trace_data_all.get(trace_id, {})
-                if trace_data.get('company') == "Clearnetworx" and trace_data.get('proposed'):
-                    measured_height = wire_info.get('_measured_height', None)
-                    if measured_height is not None:
-                        poa_height = f"{int(measured_height // 12)}' - {int(measured_height % 12)}\""
+            if main_photo_id and main_photo_id in photo_data:
+                photofirst_data = photo_data[main_photo_id].get('photofirst_data', {}).get('wire', {})
+                for wire_id, wire_info in photofirst_data.items():
+                    trace_id = wire_info.get('_trace')
+                    trace_data = trace_data_all.get(trace_id, {})
 
-        # Append node information including job_status
-        node_points.append({
-            "id": node_id,
-            "lat": latitude,
-            "lng": longitude,
-            "job_status": job_status,
-            "mr_status": mr_status,
-            "company": company,
-            "fldcompl": fldcompl,
-            "pole_class": pole_class,
-            "pole_height": pole_height,
-            "pole_spec": pole_spec,
-            "tag": tag,
-            "scid": scid,
-            "poa_height": poa_height,
-        })
+                    # Check if the trace matches the desired conditions
+                    if (trace_data.get('company') == 'Clearnetworx' and
+                            trace_data.get('proposed', False) and
+                            trace_data.get('_trace_type') == 'cable' and
+                            trace_data.get('cable_type') == 'Fiber Optic Com'):
 
-        pole_count += 1
+                        # Extract the measured height and convert to feet and inches
+                        poa_height = wire_info.get('_measured_height')
+                        if poa_height is not None:
+                            feet = int(poa_height // 12)
+                            inches = int(poa_height % 12)
+                            poa_height = f"{feet}' {inches}\""
 
-    print(f"Total pole nodes found: {pole_count}")
+            # Extract POA height from "guying" if not found in wire
+            if not poa_height and main_photo_id and main_photo_id in photo_data:
+                guying_data = photo_data[main_photo_id].get('photofirst_data', {}).get('guying', {})
+                for wire_id, wire_info in guying_data.items():
+                    trace_id = wire_info.get('_trace')
+                    trace_data = trace_data_all.get(trace_id, {})
+
+                    # Check if the trace matches the desired conditions for down guy
+                    if (trace_data.get('company') == 'Clearnetworx' and
+                            trace_data.get('proposed', False) and
+                            trace_data.get('_trace_type') == 'down_guy'):
+
+                        # Extract the measured height and convert to feet and inches
+                        poa_height = wire_info.get('_measured_height')
+                        if poa_height is not None:
+                            feet = int(poa_height // 12)
+                            inches = int(poa_height % 12)
+                            poa_height = f"{feet}' {inches}\""
+                        break
+
+            # Append the node data to the list, including job_status
+            node_points.append({
+                "id": node_id,
+                "lat": latitude,
+                "lng": longitude,
+                "jobname": job_name,
+                "job_status": job_status,
+                "MR_statu": mr_status,
+                "company": company,
+                "fldcompl": fldcompl,
+                "pole_class": pole_class,
+                "tag": tag,
+                "scid": scid,
+                "POA_Height": poa_height
+            })
+
     return node_points
-
-
 
 def extractAnchors(job_data, job_name, job_id):
     """Extract anchor points from job data, focusing only on the Anchor_Spec attribute."""
@@ -596,9 +605,235 @@ def saveMasterGeoPackage(all_nodes, all_connections, all_anchors, filename):
                 print(f"Anchors layer successfully saved to: {file_path}")
             except Exception as e:
                 print(f"Error saving anchors layer to GeoPackage: {e}")
-# Main function
+
+
+# Function to create a report of MR Status counts per job
+def create_report(jobs_summary):
+    report_data = []
+
+    for job in jobs_summary:
+        job_name = job['job_name']
+
+        # Assuming "job_status" should be retrieved as in extractNodes function
+        job_status = job.get('attributes', {}).get('job_status', 'Unknown')
+
+        mr_status_counts = job['mr_status_counts']
+        pole_count = sum(mr_status_counts.values())
+
+        report_data.append({
+            'Job Name': job_name,
+            'Job Status': job_status,
+            'No MR': mr_status_counts.get('No MR', 0),
+            'Comm MR': mr_status_counts.get('Comm MR', 0),
+            'Electric MR': mr_status_counts.get('Electric MR', 0),
+            'PCO Required': mr_status_counts.get('PCO Required', 0),
+            'Pole Count': pole_count
+        })
+
+    # Create a DataFrame from the report data
+    df_report = pd.DataFrame(report_data)
+
+    # Generate a filename with a timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_filename = f"Katapult_Report_{timestamp}.xlsx"
+    report_path = os.path.join(r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace",
+                               report_filename)
+
+    # Write the report to an Excel file with formatting
+    try:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Aerial Status Report"
+
+        # Add merged header with title in the first row
+        ws.merge_cells('A1:G1')
+        title_cell = ws.cell(row=1, column=1)
+        title_cell.value = "Aerial Status Report"
+        title_cell.font = Font(size=18, bold=True)
+        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Add the date/time in the second row
+        ws.merge_cells('A2:G2')
+        date_cell = ws.cell(row=2, column=1)
+        date_cell.value = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+        date_cell.font = Font(size=12)
+        date_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Set row height for the first row to accommodate title
+        ws.row_dimensions[1].height = 30
+        # Set row height for the second row to accommodate the date
+        ws.row_dimensions[2].height = 20
+
+        # Add the column headers with styling in the third row
+        for col_num, column_title in enumerate(df_report.columns, 1):
+            cell = ws.cell(row=3, column=col_num)
+            cell.value = column_title
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+
+            # Color the column headers according to their field
+            header_colors = {
+                "Job Name": "CCFFCC",
+                "Job Status": "CCFFCC",
+                "No MR": "D9D9D9",
+                "Comm MR": "FFFF00",
+                "Electric MR": "FFC000",
+                "PCO Required": "FF0000",
+                "Pole Count": "CCFFCC",
+            }
+            if column_title in header_colors:
+                cell.fill = PatternFill(start_color=header_colors[column_title], end_color=header_colors[column_title],
+                                        fill_type="solid")
+
+        # Add the data rows
+        for r_idx, row in enumerate(dataframe_to_rows(df_report, index=False, header=False), 4):
+            for c_idx, value in enumerate(row, 1):
+                ws.cell(row=r_idx, column=c_idx, value=value)
+
+        # Adjust column widths: "Job Status" column to 23.71 and others to 13.3
+        for col in ws.iter_cols(min_row=3, max_row=3):  # Iterating over the column headers row
+            column_letter = col[0].column_letter
+            if col[0].value == "Job Status":
+                ws.column_dimensions[column_letter].width = 23.71
+            else:
+                ws.column_dimensions[column_letter].width = 13.3
+
+        # Add borders around the entire report including title and date rows
+        all_border = Border(left=Side(style='thin'),
+                            right=Side(style='thin'),
+                            top=Side(style='thin'),
+                            bottom=Side(style='thin'))
+
+        # Apply borders to all cells including title and date rows
+        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=7):
+            for cell in row:
+                cell.border = all_border
+
+        # Add Job Status Summary Headers in Two Rows (4 statuses per row) with colors
+        job_statuses_row_1 = [
+            ("Pending Field Collection", "CCFFCC"),
+            ("Pending Photo Annotation", "B7DEE8"),
+            ("Sent to PE", "CCC0DA"),
+            ("Pending EMR", "FFC000")
+        ]
+        job_statuses_row_2 = [
+            ("Approved for Construction", "9BBB59"),
+            ("Hold", "BFBFBF"),
+            ("As Built", "FABF8F"),
+            ("Delivered", "92D050")
+        ]
+
+        # Add first row of job statuses from I6 to L6
+        for col_num, (status, color) in enumerate(job_statuses_row_1, 9):  # Start at column 'I' (index 9)
+            header_cell = ws.cell(row=6, column=col_num)
+            header_cell.value = status
+            header_cell.font = Font(bold=True)
+            header_cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+            header_cell.alignment = Alignment(horizontal="center", vertical="center")
+            # Set the column width to 24.14
+            ws.column_dimensions[header_cell.column_letter].width = 24.14
+
+        # Add counts for first row of job statuses in row 7
+        job_status_counts = {status: 0 for status, _ in job_statuses_row_1 + job_statuses_row_2}
+
+        # Calculate the count of each job status
+        for job in jobs_summary:
+            job_status = job.get('attributes', {}).get('job_status',
+                                                       'Unknown')  # Consistent retrieval as in extractNodes
+            if job_status in job_status_counts:
+                job_status_counts[job_status] += 1
+
+        # Write the counts in row 7 under each corresponding header for first row of statuses
+        for col_num, (status, _) in enumerate(job_statuses_row_1, 9):  # Start at column 'I' (index 9)
+            count_cell = ws.cell(row=7, column=col_num)
+            count_cell.value = job_status_counts[status]
+            count_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Leave row 8 as an empty row
+
+        # Add second row of job statuses from I9 to L9
+        for col_num, (status, color) in enumerate(job_statuses_row_2, 9):  # Start at column 'I' (index 9)
+            header_cell = ws.cell(row=9, column=col_num)
+            header_cell.value = status
+            header_cell.font = Font(bold=True)
+            header_cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+            header_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Write the counts in row 10 under each corresponding header for second row of statuses
+        for col_num, (status, _) in enumerate(job_statuses_row_2, 9):  # Start at column 'I' (index 9)
+            count_cell = ws.cell(row=10, column=col_num)
+            count_cell.value = job_status_counts[status]
+            count_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Apply borders to the new summary table headers and counts
+        for row in ws.iter_rows(min_row=6, max_row=7, min_col=9,
+                                max_col=12):  # Columns I to L (indices 9 to 12) for first row
+            for cell in row:
+                cell.border = all_border
+        for row in ws.iter_rows(min_row=9, max_row=10, min_col=9,
+                                max_col=12):  # Columns I to L (indices 9 to 12) for second row
+            for cell in row:
+                cell.border = all_border
+
+        # Add Make Ready Status Headers and Totals Section with colors
+        make_ready_statuses = [
+            ("Total No MR", "D9D9D9"),
+            ("Total Comm MR", "FFFF00"),
+            ("Total Electric MR", "FFC000"),
+            ("Total PCO Required", "FF0000")
+        ]
+
+        # Add headers for Make Ready Status from I12 to L12
+        for col_num, (status, color) in enumerate(make_ready_statuses, 9):  # Start at column 'I' (index 9)
+            header_cell = ws.cell(row=12, column=col_num)
+            header_cell.value = status
+            header_cell.font = Font(bold=True)
+            header_cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+            header_cell.alignment = Alignment(horizontal="center", vertical="center")
+            # Set the column width to 24.14
+            ws.column_dimensions[header_cell.column_letter].width = 24.14
+
+        # Write the totals in row 13 under each corresponding header
+        for col_num, (status, _) in enumerate(make_ready_statuses, 9):  # Start at column 'I' (index 9)
+            total_value = df_report[status.replace("Total ", "")].sum()  # Calculate the total for each status
+            count_cell = ws.cell(row=13, column=col_num)
+            count_cell.value = total_value
+            count_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Leave row 14 as an empty row for spacing
+
+        # Add "Total Pole Count" header in I15
+        header_cell = ws.cell(row=15, column=9)  # Column 'I' (index 9)
+        header_cell.value = "Total Pole Count"
+        header_cell.font = Font(bold=True)
+        header_cell.fill = PatternFill(start_color="CCFFCC", end_color="CCFFCC", fill_type="solid")
+        header_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Write the total pole count in row 16 under the header
+        total_pole_count = df_report["Pole Count"].sum()  # Calculate total pole count
+        count_cell = ws.cell(row=16, column=9)
+        count_cell.value = total_pole_count
+        count_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        # Apply borders to the Make Ready Status headers, totals, and pole count
+        for row in ws.iter_rows(min_row=12, max_row=13, min_col=9,
+                                max_col=12):  # Columns I to L for make ready headers and totals
+            for cell in row:
+                cell.border = all_border
+        for row in ws.iter_rows(min_row=15, max_row=16, min_col=9, max_col=9):  # Column I for total pole count
+            for cell in row:
+                cell.border = all_border
+
+        # Save the workbook
+        wb.save(report_path)
+        print(f"Report successfully created: {report_path}")
+    except Exception as e:
+        print(f"Error creating report: {e}")
+
+
 # Main function to run the job for testing
-def main():
+def main(email_list):
+
     all_jobs = []
 
     if TEST_ONLY_SPECIFIC_JOB:
@@ -609,6 +844,7 @@ def main():
     all_nodes = []
     all_connections = []
     all_anchors = []
+    jobs_summary = []
 
     if not all_jobs:
         print("No jobs found.")
@@ -628,6 +864,21 @@ def main():
 
             if nodes:
                 all_nodes.extend(nodes)
+
+                # Summarize MR Status counts for the job
+                mr_status_counts = {}
+                for node in nodes:
+                    mr_status = node['MR_statu']
+                    if mr_status not in mr_status_counts:
+                        mr_status_counts[mr_status] = 0
+                    mr_status_counts[mr_status] += 1
+
+                jobs_summary.append({
+                    'job_name': job_name,
+                    'job_status': job.get('status', "Unknown"),
+                    'mr_status_counts': mr_status_counts
+                })
+
             if connections:
                 all_connections.extend(connections)
             if anchors:
@@ -640,9 +891,21 @@ def main():
     else:
         print("No data extracted for any job. Nothing to save.")
 
+    # Create a report with MR Status counts per job
+    report_path = None
+    if jobs_summary:
+        report_path = create_report(jobs_summary)
+
+    # Send email notification after report generation
+    if report_path:
+        send_email_notification(email_list, report_path)
+
 if __name__ == "__main__":
+    # Email list to notify when the report is done
+
+    email_list = ["brandan.lewis@deeplydigital.com"]
     start_time = time.time()  # Record the start time
-    main()
+    main(email_list)
     end_time = time.time()
     elapsed_time = end_time - start_time
     print(f"Total execution time: {elapsed_time:.2f} seconds")
