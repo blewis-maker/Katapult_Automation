@@ -634,8 +634,8 @@ def create_report(jobs_summary):
     df_report = pd.DataFrame(report_data)
 
     # Generate a filename with a timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_filename = f"Katapult_Report_{timestamp}.xlsx"
+    timestamp = datetime.now().strftime("%m%d%Y_%I%M")
+    report_filename = f"Aerial_Status_Report_{timestamp}.xlsx"
     report_path = os.path.join(r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace",
                                report_filename)
 
@@ -655,7 +655,7 @@ def create_report(jobs_summary):
         # Add the date/time in the second row
         ws.merge_cells('A2:G2')
         date_cell = ws.cell(row=2, column=1)
-        date_cell.value = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+        date_cell.value = datetime.now().strftime('%d/%m/%Y %I:%M:%p')
         date_cell.font = Font(size=12)
         date_cell.alignment = Alignment(horizontal="center", vertical="center")
 
