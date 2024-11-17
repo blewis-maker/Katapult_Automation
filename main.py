@@ -615,7 +615,7 @@ def create_report(jobs_summary):
         job_name = job['job_name']
 
         # Assuming "job_status" should be retrieved as in extractNodes function
-        job_status = job.get('attributes', {}).get('job_status', 'Unknown')
+        job_status = job.get('job_status', 'Unknown')
 
         mr_status_counts = job['mr_status_counts']
         pole_count = sum(mr_status_counts.values())
@@ -747,8 +747,7 @@ def create_report(jobs_summary):
 
         # Calculate the count of each job status
         for job in jobs_summary:
-            job_status = job.get('attributes', {}).get('job_status',
-                                                       'Unknown')  # Consistent retrieval as in extractNodes
+            job_status = job.get('metadata', {}).get('job_status','Unknown')  # Consistent retrieval as in extractNodes
             if job_status in job_status_counts:
                 job_status_counts[job_status] += 1
 
@@ -977,7 +976,7 @@ def main(email_list):
 
                 jobs_summary.append({
                     'job_name': job_name,
-                    'job_status': job.get('status', "Unknown"),
+                    'job_status': job_data.get('metadata', {}).get('job_status', 'Unknown'),  # Extract job status from job_data,
                     'mr_status_counts': mr_status_counts
                 })
 
