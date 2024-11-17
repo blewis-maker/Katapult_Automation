@@ -827,10 +827,91 @@ def create_report(jobs_summary):
                 cell.border = all_border
 
         # Save the workbook
-        wb.save(report_path)
+        global saved_report_path
+        saved_report_path = report_path
         print(f"Report successfully created: {report_path}")
     except Exception as e:
         print(f"Error creating report: {e}")
+    return report_path
+
+# Function to send email notification with attachment
+def send_email_notification(email_list, report_path):
+    try:
+        smtp_server = "smtp.office365.com"  # Change to your SMTP server
+        smtp_port = 587
+        smtp_user = "brandan.lewis@deeplydigital.com"  # Change to your email address
+        smtp_password = "Bmxican123!"  # Change to your email password
+
+        # Set up the SMTP server
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+
+        # Create the email
+        from_email = smtp_user
+        to_emails = email_list
+
+        for to_email in to_emails:
+            msg = MIMEMultipart('alternative')
+            msg['From'] = from_email
+            msg['To'] = to_email
+            msg['Subject'] = f"Aerial Status Report: {datetime.now().strftime('%m/%d/%Y %I:%M %p')}"
+
+            # Plain text version of the email body
+            text_body = (
+                "Hey Team,\n\n"
+                "The Katapult API automation script has finished running and the report has been generated.\n"
+                "The report is designed to give an overview of all poles that are in design with metrics to support decision making and cost planning.\n"
+                "Please find the attached report for more details.\n\n"
+                "Thanks,\n"
+                "Brandan"
+            )
+
+            # HTML version of the email body
+            html_body = """
+            <html>
+            <body>
+                <p>Hey Team,</p>
+                <p>The Katapult automation script has <b>finished running</b> and the report has been generated.</p>
+                <p>The report is designed to give an overview of all poles that are in design with metrics to support decision making and cost planning.</p>
+                <p>See the updated layer in the web map below.</p>
+                <p><a href='https://gis.clearnetworx.com/portal/apps/mapviewer/index.html?webmap=e3ee3bfdc6184987baf87f9f0ebd23ef'>Katapult Master API Map</a></p>
+                <p>Please find the attached report for more details.</p>
+                <p>Thanks,<br>
+                   <i>Brandan</i>
+                </p>
+            </body>
+            </html>
+            """
+
+            # Attach both plain text and HTML versions to support different email clients
+            part1 = MIMEText(text_body, 'plain')
+            part2 = MIMEText(html_body, 'html')
+
+            msg.attach(part1)
+            msg.attach(part2)
+
+            # Attach the Excel file
+            attachment = MIMEBase('application', 'octet-stream')
+            try:
+                with open(report_path, "rb") as attachment_file:
+                    attachment.set_payload(attachment_file.read())
+                encoders.encode_base64(attachment)
+                attachment.add_header('Content-Disposition', f'attachment; filename=Aerial_Status_Report_{datetime.now().strftime("%m%d%Y_%I:%M %p")}.xlsx')
+                msg.attach(attachment)
+            except Exception as e:
+                print(f"Error reading the report file for attachment: {e}")
+                continue
+
+            # Send the email
+            server.send_message(msg)
+            print(f"Email sent to {to_email}")
+
+        # Close the SMTP server
+        server.quit()
+
+    except Exception as e:
+        print(f"Error sending email: {e}")
 
 
 # Main function to run the job for testing
