@@ -632,12 +632,19 @@ def create_report(jobs_summary):
 
     # Create a DataFrame from the report data
     df_report = pd.DataFrame(report_data)
-
+    # Ensure the directory exists
+    workspace_dir = r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace"
+    if not os.path.exists(workspace_dir):
+        try:
+            os.makedirs(workspace_dir)
+            print(f"Workspace directory created: {workspace_dir}")
+        except Exception as e:
+            print(f"Failed to create workspace directory: {e}")
+            return None
     # Generate a filename with a timestamp
     timestamp = datetime.now().strftime("%m%d%Y_%I%M")
     report_filename = f"Aerial_Status_Report_{timestamp}.xlsx"
-    report_path = os.path.join(r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace",
-                               report_filename)
+    report_path = os.path.join(r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace", report_filename)
 
     # Write the report to an Excel file with formatting
     try:
@@ -827,7 +834,7 @@ def create_report(jobs_summary):
                 cell.border = all_border
 
         # Save the workbook
-        global saved_report_path
+        wb.save(report_path)
         saved_report_path = report_path
         print(f"Report successfully created: {report_path}")
     except Exception as e:
@@ -837,10 +844,10 @@ def create_report(jobs_summary):
 # Function to send email notification with attachment
 def send_email_notification(email_list, report_path):
     try:
-        smtp_server = "smtp.office365.com"  # Change to your SMTP server
+        smtp_server = "smtp.office365.com"  # Your SMTP server
         smtp_port = 587
-        smtp_user = "brandan.lewis@deeplydigital.com"  # Change to your email address
-        smtp_password = "Bmxican123!"  # Change to your email password
+        smtp_user = "brandan.lewis@deeplydigital.com"  # Your email address
+        smtp_password = "Bmxican123!"  # Your email password
 
         # Set up the SMTP server
         server = smtplib.SMTP(smtp_server, smtp_port)
@@ -891,16 +898,28 @@ def send_email_notification(email_list, report_path):
             msg.attach(part1)
             msg.attach(part2)
 
-            # Attach the Excel file
-            attachment = MIMEBase('application', 'octet-stream')
-            try:
-                with open(report_path, "rb") as attachment_file:
-                    attachment.set_payload(attachment_file.read())
-                encoders.encode_base64(attachment)
-                attachment.add_header('Content-Disposition', f'attachment; filename=Aerial_Status_Report_{datetime.now().strftime("%m%d%Y_%I:%M %p")}.xlsx')
-                msg.attach(attachment)
-            except Exception as e:
-                print(f"Error reading the report file for attachment: {e}")
+            # Retry mechanism to wait for the report file to be available
+            max_retries = 5
+            retries = 0
+            while not os.path.exists(report_path) and retries < max_retries:
+                print(f"Waiting for report file to be available: {report_path} (Attempt {retries + 1})")
+                time.sleep(2)  # Wait for 2 seconds before retrying
+                retries += 1
+
+            # Attach the Excel file if it exists
+            if os.path.exists(report_path):
+                attachment = MIMEBase('application', 'octet-stream')
+                try:
+                    with open(report_path, "rb") as attachment_file:
+                        attachment.set_payload(attachment_file.read())
+                    encoders.encode_base64(attachment)
+                    attachment.add_header('Content-Disposition', f'attachment; filename={os.path.basename(report_path)}')
+                    msg.attach(attachment)
+                except Exception as e:
+                    print(f"Error reading the report file for attachment: {e}")
+                    continue
+            else:
+                print(f"Error: Report file not found after {max_retries} retries. Skipping email attachment.")
                 continue
 
             # Send the email
