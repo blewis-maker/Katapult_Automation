@@ -22,7 +22,7 @@ from email import encoders
 
 
 # Toggle to enable/disable testing a specific job
-TEST_ONLY_SPECIFIC_JOB = True
+TEST_ONLY_SPECIFIC_JOB = False
 
 # ID of the specific job to test
 TEST_JOB_ID = "-O-nlOLQbPIYhHwJCPDN"
@@ -614,8 +614,8 @@ def create_report(jobs_summary):
     for job in jobs_summary:
         job_name = job['job_name']
 
-        # Assuming "job_status" should be retrieved as in extractNodes function
-        job_status = job.get('job_status', 'Unknown')
+        # Extract and clean job status
+        job_status = job.get('job_status', 'Unknown').strip()
 
         mr_status_counts = job['mr_status_counts']
         pole_count = sum(mr_status_counts.values())
@@ -632,6 +632,7 @@ def create_report(jobs_summary):
 
     # Create a DataFrame from the report data
     df_report = pd.DataFrame(report_data)
+
     # Ensure the directory exists
     workspace_dir = r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace"
     if not os.path.exists(workspace_dir):
@@ -641,10 +642,11 @@ def create_report(jobs_summary):
         except Exception as e:
             print(f"Failed to create workspace directory: {e}")
             return None
+
     # Generate a filename with a timestamp
     timestamp = datetime.now().strftime("%m%d%Y_%I%M")
     report_filename = f"Aerial_Status_Report_{timestamp}.xlsx"
-    report_path = os.path.join(r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace", report_filename)
+    report_path = os.path.join(workspace_dir, report_filename)
 
     # Write the report to an Excel file with formatting
     try:
@@ -742,22 +744,18 @@ def create_report(jobs_summary):
             # Set the column width to 24.14
             ws.column_dimensions[header_cell.column_letter].width = 24.14
 
-        # Add counts for first row of job statuses in row 7
-        job_status_counts = {status: 0 for status, _ in job_statuses_row_1 + job_statuses_row_2}
+        job_status_counts = {status[0]: 0 for status in job_statuses_row_1 + job_statuses_row_2}
 
-        # Calculate the count of each job status
         for job in jobs_summary:
-            job_status = job.get('metadata', {}).get('job_status','Unknown')  # Consistent retrieval as in extractNodes
+            job_status = job.get('job_status', 'Unknown').strip()  # Consistent retrieval as in extractNodes
             if job_status in job_status_counts:
                 job_status_counts[job_status] += 1
 
-        # Write the counts in row 7 under each corresponding header for first row of statuses
+        # Write the counts in row 7 under each corresponding header for the first row of statuses
         for col_num, (status, _) in enumerate(job_statuses_row_1, 9):  # Start at column 'I' (index 9)
             count_cell = ws.cell(row=7, column=col_num)
             count_cell.value = job_status_counts[status]
             count_cell.alignment = Alignment(horizontal="center", vertical="center")
-
-        # Leave row 8 as an empty row
 
         # Add second row of job statuses from I9 to L9
         for col_num, (status, color) in enumerate(job_statuses_row_2, 9):  # Start at column 'I' (index 9)
@@ -767,7 +765,7 @@ def create_report(jobs_summary):
             header_cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
             header_cell.alignment = Alignment(horizontal="center", vertical="center")
 
-        # Write the counts in row 10 under each corresponding header for second row of statuses
+        # Write the counts in row 10 under each corresponding header for the second row of statuses
         for col_num, (status, _) in enumerate(job_statuses_row_2, 9):  # Start at column 'I' (index 9)
             count_cell = ws.cell(row=10, column=col_num)
             count_cell.value = job_status_counts[status]
@@ -775,69 +773,20 @@ def create_report(jobs_summary):
 
         # Apply borders to the new summary table headers and counts
         for row in ws.iter_rows(min_row=6, max_row=7, min_col=9,
-                                max_col=12):  # Columns I to L (indices 9 to 12) for first row
+                                max_col=12):  # Columns I to L (indices 9 to 12) for the first row
             for cell in row:
                 cell.border = all_border
         for row in ws.iter_rows(min_row=9, max_row=10, min_col=9,
-                                max_col=12):  # Columns I to L (indices 9 to 12) for second row
-            for cell in row:
-                cell.border = all_border
-
-        # Add Make Ready Status Headers and Totals Section with colors
-        make_ready_statuses = [
-            ("Total No MR", "D9D9D9"),
-            ("Total Comm MR", "FFFF00"),
-            ("Total Electric MR", "FFC000"),
-            ("Total PCO Required", "FF0000")
-        ]
-
-        # Add headers for Make Ready Status from I12 to L12
-        for col_num, (status, color) in enumerate(make_ready_statuses, 9):  # Start at column 'I' (index 9)
-            header_cell = ws.cell(row=12, column=col_num)
-            header_cell.value = status
-            header_cell.font = Font(bold=True)
-            header_cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-            header_cell.alignment = Alignment(horizontal="center", vertical="center")
-            # Set the column width to 24.14
-            ws.column_dimensions[header_cell.column_letter].width = 24.14
-
-        # Write the totals in row 13 under each corresponding header
-        for col_num, (status, _) in enumerate(make_ready_statuses, 9):  # Start at column 'I' (index 9)
-            total_value = df_report[status.replace("Total ", "")].sum()  # Calculate the total for each status
-            count_cell = ws.cell(row=13, column=col_num)
-            count_cell.value = total_value
-            count_cell.alignment = Alignment(horizontal="center", vertical="center")
-
-        # Leave row 14 as an empty row for spacing
-
-        # Add "Total Pole Count" header in I15
-        header_cell = ws.cell(row=15, column=9)  # Column 'I' (index 9)
-        header_cell.value = "Total Pole Count"
-        header_cell.font = Font(bold=True)
-        header_cell.fill = PatternFill(start_color="CCFFCC", end_color="CCFFCC", fill_type="solid")
-        header_cell.alignment = Alignment(horizontal="center", vertical="center")
-
-        # Write the total pole count in row 16 under the header
-        total_pole_count = df_report["Pole Count"].sum()  # Calculate total pole count
-        count_cell = ws.cell(row=16, column=9)
-        count_cell.value = total_pole_count
-        count_cell.alignment = Alignment(horizontal="center", vertical="center")
-
-        # Apply borders to the Make Ready Status headers, totals, and pole count
-        for row in ws.iter_rows(min_row=12, max_row=13, min_col=9,
-                                max_col=12):  # Columns I to L for make ready headers and totals
-            for cell in row:
-                cell.border = all_border
-        for row in ws.iter_rows(min_row=15, max_row=16, min_col=9, max_col=9):  # Column I for total pole count
+                                max_col=12):  # Columns I to L (indices 9 to 12) for the second row
             for cell in row:
                 cell.border = all_border
 
         # Save the workbook
         wb.save(report_path)
-        saved_report_path = report_path
         print(f"Report successfully created: {report_path}")
     except Exception as e:
         print(f"Error creating report: {e}")
+
     return report_path
 
 # Function to send email notification with attachment
