@@ -655,7 +655,7 @@ def create_report(jobs_summary):
         # Add the date/time in the second row
         ws.merge_cells('A2:G2')
         date_cell = ws.cell(row=2, column=1)
-        date_cell.value = datetime.now().strftime('%d/%m/%Y %I:%M:%p')
+        date_cell.value = datetime.now().strftime('%m/%d/%Y %I:%M:%p')
         date_cell.font = Font(size=12)
         date_cell.alignment = Alignment(horizontal="center", vertical="center")
 
@@ -695,6 +695,8 @@ def create_report(jobs_summary):
             column_letter = col[0].column_letter
             if col[0].value == "Job Status":
                 ws.column_dimensions[column_letter].width = 23.71
+            elif col[0].value == "Job Name":
+                ws.column_dimensions[column_letter].width = 44
             else:
                 ws.column_dimensions[column_letter].width = 13.3
 
