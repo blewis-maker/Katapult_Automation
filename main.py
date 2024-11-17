@@ -633,6 +633,9 @@ def create_report(jobs_summary):
     # Create a DataFrame from the report data
     df_report = pd.DataFrame(report_data)
 
+    # Sort the DataFrame by the "Job Status" column alphabetically
+    df_report = df_report.sort_values(by='Job Status')
+
     # Ensure the directory exists
     workspace_dir = r"C:\Users\lewis\Documents\Deeply_Digital\Katapult_Automation\workspace"
     if not os.path.exists(workspace_dir):
@@ -953,7 +956,7 @@ def main(email_list):
 if __name__ == "__main__":
     # Email list to notify when the report is done
 
-    email_list = ["brandan.lewis@deeplydigital.com"]
+    email_list = ["brandan.lewis@deeplydigital.com", "jcook@deeplydigital.com", "davids@deeplydigital.com"]
     start_time = time.time()  # Record the start time
     main(email_list)
     end_time = time.time()
